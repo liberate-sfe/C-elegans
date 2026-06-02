@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 SUMMARY_FIELDS = [
@@ -40,6 +41,43 @@ DETECTION_FIELDS = [
     "solidity",
 ]
 
+VIDEO_FRAME_FIELDS = [
+    "video_id",
+    "video_path",
+    "status",
+    "error",
+    "frame_index",
+    "sampled_frame_index",
+    "timestamp_s",
+    "worm_count",
+    "field_area_mm2",
+    "worm_density_per_mm2",
+    "calibration_um_per_pixel",
+    "width_px",
+    "height_px",
+    "mask_area_px",
+    "polarity",
+    "processing_ms",
+]
+
+VIDEO_DETECTION_FIELDS = [
+    "video_id",
+    "frame_index",
+    "sampled_frame_index",
+    "timestamp_s",
+    "detection_id",
+    "x",
+    "y",
+    "width",
+    "height",
+    "centroid_x",
+    "centroid_y",
+    "area_px",
+    "length_px",
+    "aspect_ratio",
+    "solidity",
+]
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
@@ -47,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "analyze":
         return analyze_command(args)
+    if args.command == "analyze-video":
+        return analyze_video_command(args)
 
     parser.print_help()
     return 1
@@ -90,7 +130,51 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--background-kernel", type=int, default=51)
     analyze.add_argument("--morph-kernel", type=int, default=3)
     analyze.set_defaults(command="analyze")
+
+    analyze_video = subparsers.add_parser(
+        "analyze-video",
+        help="Analyze one video or a directory of videos by sampling frames.",
+    )
+    analyze_video.add_argument("--input", required=True, type=Path)
+    analyze_video.add_argument(
+        "--calibration-um-per-pixel",
+        required=True,
+        type=float,
+        help="Micrometers per pixel for this camera and magnification setup.",
+    )
+    analyze_video.add_argument("--output", required=True, type=Path)
+    analyze_video.add_argument("--detections-output", type=Path)
+    analyze_video.add_argument("--annotated-video", type=Path)
+    analyze_video.add_argument(
+        "--frame-step",
+        type=int,
+        default=1,
+        help="Analyze every Nth frame; use higher values for long videos.",
+    )
+    analyze_video.add_argument(
+        "--max-frames",
+        type=int,
+        help="Stop after this many sampled frames.",
+    )
+    add_detector_arguments(analyze_video)
+    analyze_video.set_defaults(command="analyze-video")
     return parser
+
+
+def add_detector_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--polarity",
+        choices=["dark", "bright", "auto"],
+        default="dark",
+        help="Use dark for dark worms on a light background.",
+    )
+    parser.add_argument("--min-area-px", type=float, default=80.0)
+    parser.add_argument("--max-area-px", type=float, default=50000.0)
+    parser.add_argument("--min-aspect-ratio", type=float, default=1.2)
+    parser.add_argument("--min-length-px", type=float, default=12.0)
+    parser.add_argument("--blur-kernel", type=int, default=5)
+    parser.add_argument("--background-kernel", type=int, default=51)
+    parser.add_argument("--morph-kernel", type=int, default=3)
 
 
 def analyze_command(args: argparse.Namespace) -> int:
@@ -162,6 +246,89 @@ def analyze_command(args: argparse.Namespace) -> int:
         print(f"Annotated images: {args.annotated_dir}")
     if args.detections_output is not None:
         print(f"Detection CSV: {args.detections_output}")
+    return 0
+
+
+def analyze_video_command(args: argparse.Namespace) -> int:
+    from .analysis import DetectorConfig, analyze_video, iter_video_paths
+
+    if args.calibration_um_per_pixel <= 0:
+        raise SystemExit("--calibration-um-per-pixel must be greater than zero.")
+    if args.frame_step <= 0:
+        raise SystemExit("--frame-step must be greater than zero.")
+    if args.max_frames is not None and args.max_frames <= 0:
+        raise SystemExit("--max-frames must be greater than zero.")
+
+    config = DetectorConfig(
+        polarity=args.polarity,
+        min_area_px=args.min_area_px,
+        max_area_px=args.max_area_px,
+        min_aspect_ratio=args.min_aspect_ratio,
+        min_length_px=args.min_length_px,
+        blur_kernel=args.blur_kernel,
+        background_kernel=args.background_kernel,
+        morph_kernel=args.morph_kernel,
+    )
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    if args.detections_output is not None:
+        args.detections_output.parent.mkdir(parents=True, exist_ok=True)
+
+    frame_rows: list[dict[str, object]] = []
+    detection_rows: list[dict[str, object]] = []
+
+    with TemporaryDirectory(prefix="c_elegans_counter_") as temp_dir:
+        video_paths = iter_video_paths(args.input, extraction_dir=Path(temp_dir))
+        if not video_paths:
+            raise SystemExit(f"No supported videos found in {args.input}")
+
+        temp_root = Path(temp_dir)
+        for video_path in video_paths:
+            video_path_label = format_video_path_for_output(video_path, temp_root)
+            try:
+                annotated_video_path = resolve_annotated_video_path(
+                    args.annotated_video,
+                    video_path,
+                    multiple_videos=len(video_paths) > 1,
+                )
+                frame_results = analyze_video(
+                    video_path=video_path,
+                    calibration_um_per_pixel=args.calibration_um_per_pixel,
+                    annotated_video_path=annotated_video_path,
+                    config=config,
+                    frame_step=args.frame_step,
+                    max_frames=args.max_frames,
+                )
+                frame_rows.extend(
+                    build_video_frame_row(
+                        result,
+                        calibration_um_per_pixel=args.calibration_um_per_pixel,
+                        video_path_label=video_path_label,
+                    )
+                    for result in frame_results
+                )
+                for result in frame_results:
+                    detection_rows.extend(build_video_detection_rows(result))
+            except Exception as exc:
+                frame_rows.append(
+                    build_video_error_row(
+                        video_path,
+                        calibration_um_per_pixel=args.calibration_um_per_pixel,
+                        video_path_label=video_path_label,
+                        error=str(exc),
+                    )
+                )
+
+    write_csv(args.output, VIDEO_FRAME_FIELDS, frame_rows)
+    if args.detections_output is not None:
+        write_csv(args.detections_output, VIDEO_DETECTION_FIELDS, detection_rows)
+
+    print(f"Analyzed {len(video_paths)} video(s).")
+    print(f"Frame summary CSV: {args.output}")
+    if args.detections_output is not None:
+        print(f"Detection CSV: {args.detections_output}")
+    if args.annotated_video is not None:
+        print(f"Annotated video output: {args.annotated_video}")
     return 0
 
 
@@ -250,6 +417,103 @@ def build_detection_rows(result: ImageResult) -> list[dict[str, object]]:
         rows.append(
             {
                 "image_id": result.image_id,
+                "detection_id": detection.detection_id,
+                "x": detection.x,
+                "y": detection.y,
+                "width": detection.width,
+                "height": detection.height,
+                "centroid_x": detection.centroid_x,
+                "centroid_y": detection.centroid_y,
+                "area_px": detection.area_px,
+                "length_px": detection.length_px,
+                "aspect_ratio": detection.aspect_ratio,
+                "solidity": detection.solidity,
+            }
+        )
+    return rows
+
+
+def resolve_annotated_video_path(
+    annotated_video: Path | None,
+    video_path: Path,
+    multiple_videos: bool,
+) -> Path | None:
+    if annotated_video is None:
+        return None
+    if multiple_videos or annotated_video.suffix == "":
+        annotated_video.mkdir(parents=True, exist_ok=True)
+        return annotated_video / f"{video_path.stem}_annotated.mp4"
+    return annotated_video
+
+
+def build_video_frame_row(
+    result: VideoFrameResult,
+    calibration_um_per_pixel: float,
+    video_path_label: str | None = None,
+) -> dict[str, object]:
+    return {
+        "video_id": result.video_id,
+        "video_path": video_path_label or str(result.video_path),
+        "status": "ok",
+        "error": "",
+        "frame_index": result.frame_index,
+        "sampled_frame_index": result.sampled_frame_index,
+        "timestamp_s": result.timestamp_s,
+        "worm_count": result.worm_count,
+        "field_area_mm2": result.field_area_mm2,
+        "worm_density_per_mm2": result.density_per_mm2,
+        "calibration_um_per_pixel": calibration_um_per_pixel,
+        "width_px": result.width_px,
+        "height_px": result.height_px,
+        "mask_area_px": result.mask_area_px,
+        "polarity": result.polarity,
+        "processing_ms": result.processing_ms,
+    }
+
+
+def build_video_error_row(
+    video_path: Path,
+    calibration_um_per_pixel: float,
+    video_path_label: str | None,
+    error: str,
+) -> dict[str, object]:
+    return {
+        "video_id": video_path.stem,
+        "video_path": video_path_label or str(video_path),
+        "status": "error",
+        "error": error,
+        "frame_index": "",
+        "sampled_frame_index": "",
+        "timestamp_s": "",
+        "worm_count": "",
+        "field_area_mm2": "",
+        "worm_density_per_mm2": "",
+        "calibration_um_per_pixel": calibration_um_per_pixel,
+        "width_px": "",
+        "height_px": "",
+        "mask_area_px": "",
+        "polarity": "",
+        "processing_ms": "",
+    }
+
+
+def format_video_path_for_output(video_path: Path, temp_root: Path) -> str:
+    try:
+        relative_path = video_path.relative_to(temp_root)
+    except ValueError:
+        return str(video_path)
+    return f"zip:{relative_path.as_posix()}"
+
+
+def build_video_detection_rows(result: VideoFrameResult) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for detection in result.detections:
+        rows.append(
+            {
+                "video_id": result.video_id,
+                "frame_index": result.frame_index,
+                "sampled_frame_index": result.sampled_frame_index,
+                "timestamp_s": result.timestamp_s,
                 "detection_id": detection.detection_id,
                 "x": detection.x,
                 "y": detection.y,

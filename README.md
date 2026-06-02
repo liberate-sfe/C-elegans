@@ -10,14 +10,14 @@ monitoring.
 
 ## Project Summary
 
-Manual counting and observation of small model organisms can be slow,
+Manual counting and video observation of small model organisms can be slow,
 operator-dependent, and difficult to standardize. This project aims to combine
 a low-cost imaging setup with an automated analysis pipeline that can:
 
-- detect *C. elegans* in microscope images or videos;
-- count worms in a field of view;
+- detect *C. elegans* in microscope videos;
+- count worms in sampled video frames;
 - estimate worm density, such as worms per mm2;
-- export annotated images and CSV result tables;
+- export annotated videos and CSV result tables;
 - compare automated counts against manual counts;
 - provide a training workflow for future *Daphnia* detection and tracking.
 
@@ -44,19 +44,19 @@ The core workflow is transferable even if the final biological model is not:
 
 ## First Vertical Slice
 
-The first playable research workflow now has an OpenCV baseline CLI for:
+The first playable research workflow now has an OpenCV baseline CLI for video:
 
-1. Import microscope images.
+1. Import microscope videos.
 2. Apply basic preprocessing and background correction.
-3. Detect visible worms with an OpenCV baseline.
-4. Count detected worms.
-5. Convert pixel area to real-world area using calibration data.
-6. Estimate density in worms/mm2.
-7. Export a CSV file.
-8. Save annotated output images.
-9. Compare automated counts with manual counts.
+3. Sample frames at a configurable interval.
+4. Detect visible worms with an OpenCV baseline.
+5. Count detected worms per sampled frame.
+6. Convert pixel area to real-world area using calibration data.
+7. Estimate density in worms/mm2 per sampled frame.
+8. Export frame-level and detection-level CSV files.
+9. Save an optional annotated video.
 
-Video input and tracking are planned for a later phase.
+Still-image input remains available as a calibration and threshold-tuning helper.
 
 ## Quick Start
 
@@ -67,27 +67,33 @@ python -m pip install -r requirements.txt
 python -m pip install -e software/c_elegans_counter
 ```
 
-Run the baseline on an image folder:
+Run the baseline on a video folder. The input can contain `.mp4` videos directly
+or `.zip` archives that contain videos:
 
 ```bash
-c-elegans-counter analyze \
-  --input data/example_images \
+c-elegans-counter analyze-video \
+  --input data/example_videos \
   --calibration-um-per-pixel 2.5 \
-  --output results/csv/results.csv \
-  --detections-output results/csv/detections.csv \
-  --annotated-dir results/annotated_images
+  --frame-step 5 \
+  --output results/csv/video_frames.csv \
+  --detections-output results/csv/video_detections.csv \
+  --annotated-video results/annotated_videos
 ```
 
 On Windows PowerShell:
 
 ```powershell
-c-elegans-counter analyze `
-  --input data/example_images `
+c-elegans-counter analyze-video `
+  --input data/example_videos `
   --calibration-um-per-pixel 2.5 `
-  --output results/csv/results.csv `
-  --detections-output results/csv/detections.csv `
-  --annotated-dir results/annotated_images
+  --frame-step 5 `
+  --output results/csv/video_frames.csv `
+  --detections-output results/csv/video_detections.csv `
+  --annotated-video results/annotated_videos
 ```
+
+For a local external data folder, point `--input` at that folder instead of
+copying the raw videos into the repository.
 
 The default assumes dark worms on a light background. If the imaging setup is
 different, try `--polarity bright` or `--polarity auto`, then tune
@@ -104,6 +110,7 @@ C_elegans_CV_Pilot_Project/
   data/
     README.md
     example_images/
+    example_videos/
     annotations/
   docs/
     imaging_protocol.md
@@ -116,6 +123,7 @@ C_elegans_CV_Pilot_Project/
   results/
     README.md
     annotated_images/
+    annotated_videos/
     csv/
   scripts/
     README.md
@@ -146,17 +154,17 @@ angle, field of view, and sample positioning across sessions.
 The initial software pipeline will use a simple OpenCV baseline before adding
 more advanced machine learning models.
 
-Planned pipeline:
+Planned video pipeline:
 
-1. Load image or video input.
+1. Load video input.
 2. Normalize illumination and correct background.
 3. Segment or detect worm-like objects.
 4. Filter detections by size, shape, and confidence.
-5. Count detected worms.
+5. Count detected worms per sampled frame.
 6. Apply calibration metadata.
-7. Compute field area and density.
-8. Export CSV results.
-9. Save annotated images or videos.
+7. Compute field area and density per frame.
+8. Export frame-level and detection-level CSV results.
+9. Save annotated videos.
 
 Possible future model options:
 
@@ -191,17 +199,17 @@ The project should report:
 - correlation with manual counts;
 - processing time per image;
 - robustness across low, medium, and high density samples;
-- common failure cases such as overlap, debris, eggs, and out-of-focus images.
+- common failure cases such as overlap, debris, eggs, and out-of-focus frames.
 
 ## Roadmap
 
 ### Phase 1: C. elegans Detection
 
-- Collect example images.
+- Collect example videos.
 - Define calibration method.
 - Build OpenCV baseline.
-- Export annotated images and CSV results.
-- Compare with manual counts.
+- Export annotated videos and CSV results.
+- Compare with manual frame counts.
 
 ### Phase 2: Egg And Worm Detection
 
@@ -243,8 +251,8 @@ The project should report:
 ## Status
 
 This repository currently includes a project scaffold and a first OpenCV
-counting baseline. The next step is to add a small example image set and tune
-the baseline parameters against manual counts.
+video counting baseline. The next step is to add real microscope videos and
+tune the baseline parameters against manual frame counts.
 
 ## License
 

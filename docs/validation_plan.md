@@ -31,7 +31,7 @@ Track common failure cases:
 - eggs mistaken for worms
 - debris mistaken for worms
 - bubbles or plate edges
-- out-of-focus images
+- out-of-focus frames
 - uneven illumination
 - very dense samples
 
@@ -39,9 +39,9 @@ Track common failure cases:
 
 Recommended first validation set:
 
-- 10 low-density images
-- 10 medium-density images
-- 10 high-density images
+- 3 low-density videos, with at least 10 manually counted sampled frames
+- 3 medium-density videos, with at least 10 manually counted sampled frames
+- 3 high-density videos, with at least 10 manually counted sampled frames
 - manual counts from at least one trained user
 - calibration image for the same setup
 

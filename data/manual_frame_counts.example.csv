@@ -1,0 +1,2 @@
+video_id,frame_index,timestamp_s,manual_worm_count,annotator,date,notes
+synthetic_worms,0,0.0,3,user01,2026-06-02,Synthetic smoke-test video only; replace with real frame counts.

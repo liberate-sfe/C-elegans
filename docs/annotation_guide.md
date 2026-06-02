@@ -29,7 +29,7 @@ models.
 1. Annotate only visible organisms or eggs.
 2. Do not label ambiguous debris as biological objects.
 3. Mark heavily overlapping worms only if individual bodies can be separated.
-4. Keep a separate note for difficult images instead of forcing labels.
+4. Keep a separate note for difficult frames instead of forcing labels.
 5. Track annotation tool version and annotator ID.
 
 ## Recommended Formats

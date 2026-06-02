@@ -14,10 +14,12 @@ venv/
 data/raw/
 data/full_dataset/
 results/annotated_images/*
+results/annotated_videos/*
 results/csv/*
 
 # Keep directory docs
 !results/annotated_images/.gitkeep
+!results/annotated_videos/.gitkeep
 !results/csv/.gitkeep
 
 # OS/editor

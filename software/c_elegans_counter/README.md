@@ -1,22 +1,21 @@
 # C. elegans Counter
 
-This module contains the first OpenCV baseline for image-based worm counting
+This module contains the first OpenCV baseline for video-based worm counting
 and density estimation.
 
 ## Inputs
 
-- microscope image or image folder;
+- microscope video, video folder, zip file, or folder containing zip archives;
 - calibration value in micrometers per pixel;
-- optional manual count CSV.
+- frame sampling interval.
 
 ## Outputs
 
-- summary CSV;
+- frame-level summary CSV;
 - optional per-detection CSV;
-- annotated images;
-- worm count;
-- density estimate in worms/mm2;
-- optional absolute and percentage error against manual counts.
+- optional annotated video;
+- worm count per sampled frame;
+- density estimate in worms/mm2 per sampled frame.
 
 ## Install
 
@@ -29,44 +28,58 @@ Run this from the repository root.
 ## CLI
 
 ```bash
-c-elegans-counter analyze \
-  --input data/example_images \
+c-elegans-counter analyze-video \
+  --input data/example_videos \
   --calibration-um-per-pixel 2.5 \
-  --output results/csv/results.csv \
-  --detections-output results/csv/detections.csv \
-  --annotated-dir results/annotated_images
+  --frame-step 5 \
+  --output results/csv/video_frames.csv \
+  --detections-output results/csv/video_detections.csv \
+  --annotated-video results/annotated_videos
 ```
 
 PowerShell version:
 
 ```powershell
-c-elegans-counter analyze `
-  --input data/example_images `
+c-elegans-counter analyze-video `
+  --input data/example_videos `
   --calibration-um-per-pixel 2.5 `
-  --output results/csv/results.csv `
-  --detections-output results/csv/detections.csv `
-  --annotated-dir results/annotated_images
+  --frame-step 5 `
+  --output results/csv/video_frames.csv `
+  --detections-output results/csv/video_detections.csv `
+  --annotated-video results/annotated_videos
 ```
 
-## Manual Count Comparison
+For external pilot data, pass the folder directly:
 
-Use a CSV with at least:
-
-```text
-image_id,manual_worm_count
+```powershell
+c-elegans-counter analyze-video `
+  --input "C:\path\to\example C elegans" `
+  --calibration-um-per-pixel 2.5 `
+  --frame-step 5 `
+  --output results/csv/video_frames.csv `
+  --detections-output results/csv/video_detections.csv
 ```
 
-Then run:
+## Image Calibration Helper
+
+Still-image analysis remains available for calibration frames and quick tuning:
 
 ```bash
 c-elegans-counter analyze \
   --input data/example_images \
   --calibration-um-per-pixel 2.5 \
-  --output results/csv/results.csv \
-  --manual-counts data/manual_counts.example.csv
+  --output results/csv/image_results.csv \
+  --annotated-dir results/annotated_images
 ```
 
-`image_id` should match the image filename without extension.
+## Manual Count Comparison
+
+For video validation, manually count selected frames and compare against
+`video_frames.csv`. Recommended columns:
+
+```text
+video_id,frame_index,manual_worm_count
+```
 
 ## Important Parameters
 
@@ -78,6 +91,7 @@ c-elegans-counter analyze \
 | `--min-aspect-ratio` | Prefer elongated worm-like detections |
 | `--min-length-px` | Remove tiny objects |
 | `--background-kernel` | Controls broad illumination correction |
+| `--frame-step` | Analyze every Nth frame for long videos |
 
-This baseline is intentionally simple. It should be tuned against real images
+This baseline is intentionally simple. It should be tuned against real videos
 before being treated as a scientific counting method.
