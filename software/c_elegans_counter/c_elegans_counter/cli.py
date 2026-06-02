@@ -58,6 +58,7 @@ VIDEO_FRAME_FIELDS = [
     "width_px",
     "height_px",
     "mask_area_px",
+    "motion_mask_area_px",
     "polarity",
     "processing_ms",
 ]
@@ -118,31 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--manual-counts", type=Path)
     analyze.add_argument("--image-id-column", default="image_id")
     analyze.add_argument("--manual-count-column", default="manual_worm_count")
-    analyze.add_argument(
-        "--polarity",
-        choices=["dark", "bright", "auto"],
-        default="dark",
-        help="Use dark for dark worms on a light background.",
-    )
-    analyze.add_argument("--min-area-px", type=float, default=80.0)
-    analyze.add_argument("--max-area-px", type=float, default=50000.0)
-    analyze.add_argument("--min-aspect-ratio", type=float, default=1.2)
-    analyze.add_argument("--min-length-px", type=float, default=12.0)
-    analyze.add_argument("--blur-kernel", type=int, default=5)
-    analyze.add_argument("--background-kernel", type=int, default=51)
-    analyze.add_argument("--morph-kernel", type=int, default=3)
-    analyze.add_argument(
-        "--roi-mode",
-        choices=["auto", "none"],
-        default="auto",
-        help="Use auto to detect and crop the circular microscope field of view.",
-    )
-    analyze.add_argument(
-        "--roi-margin-px",
-        type=int,
-        default=30,
-        help="Pixels to shrink inward from the detected microscope-field edge.",
-    )
+    add_detector_arguments(analyze)
     analyze.set_defaults(command="analyze")
 
     analyze_video = subparsers.add_parser(
@@ -190,6 +167,30 @@ def add_detector_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--background-kernel", type=int, default=51)
     parser.add_argument("--morph-kernel", type=int, default=3)
     parser.add_argument(
+        "--contrast-mode",
+        choices=["none", "clahe"],
+        default="none",
+        help="Use CLAHE to balance uneven microscope illumination before thresholding.",
+    )
+    parser.add_argument(
+        "--clahe-clip-limit",
+        type=float,
+        default=2.0,
+        help="CLAHE contrast limit; higher values increase local contrast.",
+    )
+    parser.add_argument(
+        "--clahe-tile-size",
+        type=int,
+        default=8,
+        help="CLAHE tile size in pixels.",
+    )
+    parser.add_argument(
+        "--threshold-scale",
+        type=float,
+        default=1.0,
+        help="Scale Otsu's threshold; values below 1.0 make detection more sensitive.",
+    )
+    parser.add_argument(
         "--roi-mode",
         choices=["auto", "none"],
         default="auto",
@@ -201,6 +202,36 @@ def add_detector_arguments(parser: argparse.ArgumentParser) -> None:
         default=30,
         help="Pixels to shrink inward from the detected microscope-field edge.",
     )
+    parser.add_argument(
+        "--motion-mode",
+        choices=["off", "filter", "augment"],
+        default="off",
+        help="Use video motion to filter or augment static detections.",
+    )
+    parser.add_argument(
+        "--motion-threshold-scale",
+        type=float,
+        default=1.0,
+        help="Scale Otsu's threshold for frame-difference motion masks.",
+    )
+    parser.add_argument(
+        "--motion-min-intensity",
+        type=float,
+        default=8.0,
+        help="Minimum absolute frame-difference intensity for motion detection.",
+    )
+    parser.add_argument(
+        "--motion-dilate-kernel",
+        type=int,
+        default=5,
+        help="Dilate motion regions so moving worm edges overlap static detections.",
+    )
+    parser.add_argument(
+        "--motion-min-area-px",
+        type=float,
+        default=5.0,
+        help="Remove tiny motion regions before applying the motion mask.",
+    )
 
 
 def analyze_command(args: argparse.Namespace) -> int:
@@ -208,8 +239,7 @@ def analyze_command(args: argparse.Namespace) -> int:
 
     if args.calibration_um_per_pixel <= 0:
         raise SystemExit("--calibration-um-per-pixel must be greater than zero.")
-    if args.roi_margin_px < 0:
-        raise SystemExit("--roi-margin-px must be zero or greater.")
+    validate_detector_args(args)
 
     config = DetectorConfig(
         polarity=args.polarity,
@@ -222,6 +252,15 @@ def analyze_command(args: argparse.Namespace) -> int:
         morph_kernel=args.morph_kernel,
         roi_mode=args.roi_mode,
         roi_margin_px=args.roi_margin_px,
+        contrast_mode=args.contrast_mode,
+        clahe_clip_limit=args.clahe_clip_limit,
+        clahe_tile_size=args.clahe_tile_size,
+        threshold_scale=args.threshold_scale,
+        motion_mode=args.motion_mode,
+        motion_threshold_scale=args.motion_threshold_scale,
+        motion_min_intensity=args.motion_min_intensity,
+        motion_dilate_kernel=args.motion_dilate_kernel,
+        motion_min_area_px=args.motion_min_area_px,
     )
 
     manual_counts = load_manual_counts(
@@ -288,8 +327,7 @@ def analyze_video_command(args: argparse.Namespace) -> int:
         raise SystemExit("--frame-step must be greater than zero.")
     if args.max_frames is not None and args.max_frames <= 0:
         raise SystemExit("--max-frames must be greater than zero.")
-    if args.roi_margin_px < 0:
-        raise SystemExit("--roi-margin-px must be zero or greater.")
+    validate_detector_args(args)
 
     config = DetectorConfig(
         polarity=args.polarity,
@@ -302,6 +340,15 @@ def analyze_video_command(args: argparse.Namespace) -> int:
         morph_kernel=args.morph_kernel,
         roi_mode=args.roi_mode,
         roi_margin_px=args.roi_margin_px,
+        contrast_mode=args.contrast_mode,
+        clahe_clip_limit=args.clahe_clip_limit,
+        clahe_tile_size=args.clahe_tile_size,
+        threshold_scale=args.threshold_scale,
+        motion_mode=args.motion_mode,
+        motion_threshold_scale=args.motion_threshold_scale,
+        motion_min_intensity=args.motion_min_intensity,
+        motion_dilate_kernel=args.motion_dilate_kernel,
+        motion_min_area_px=args.motion_min_area_px,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -384,6 +431,41 @@ def load_manual_counts(
                 continue
             counts[image_id] = float(raw_count)
     return counts
+
+
+def validate_detector_args(args: argparse.Namespace) -> None:
+    if args.min_area_px < 0:
+        raise SystemExit("--min-area-px must be zero or greater.")
+    if args.max_area_px <= 0:
+        raise SystemExit("--max-area-px must be greater than zero.")
+    if args.max_area_px < args.min_area_px:
+        raise SystemExit("--max-area-px must be greater than or equal to --min-area-px.")
+    if args.min_aspect_ratio <= 0:
+        raise SystemExit("--min-aspect-ratio must be greater than zero.")
+    if args.min_length_px < 0:
+        raise SystemExit("--min-length-px must be zero or greater.")
+    if args.blur_kernel <= 0:
+        raise SystemExit("--blur-kernel must be greater than zero.")
+    if args.background_kernel <= 0:
+        raise SystemExit("--background-kernel must be greater than zero.")
+    if args.morph_kernel <= 0:
+        raise SystemExit("--morph-kernel must be greater than zero.")
+    if args.roi_margin_px < 0:
+        raise SystemExit("--roi-margin-px must be zero or greater.")
+    if args.clahe_clip_limit <= 0:
+        raise SystemExit("--clahe-clip-limit must be greater than zero.")
+    if args.clahe_tile_size < 2:
+        raise SystemExit("--clahe-tile-size must be at least 2.")
+    if args.threshold_scale <= 0:
+        raise SystemExit("--threshold-scale must be greater than zero.")
+    if args.motion_threshold_scale <= 0:
+        raise SystemExit("--motion-threshold-scale must be greater than zero.")
+    if args.motion_min_intensity < 0:
+        raise SystemExit("--motion-min-intensity must be zero or greater.")
+    if args.motion_dilate_kernel <= 0:
+        raise SystemExit("--motion-dilate-kernel must be greater than zero.")
+    if args.motion_min_area_px < 0:
+        raise SystemExit("--motion-min-area-px must be zero or greater.")
 
 
 def build_summary_row(
@@ -503,6 +585,7 @@ def build_video_frame_row(
         "width_px": result.width_px,
         "height_px": result.height_px,
         "mask_area_px": result.mask_area_px,
+        "motion_mask_area_px": result.motion_area_px,
         "polarity": result.polarity,
         "processing_ms": result.processing_ms,
     }
@@ -530,6 +613,7 @@ def build_video_error_row(
         "width_px": "",
         "height_px": "",
         "mask_area_px": "",
+        "motion_mask_area_px": "",
         "polarity": "",
         "processing_ms": "",
     }

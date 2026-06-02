@@ -28,6 +28,15 @@ class DetectorConfig:
     morph_kernel: int = 3
     roi_mode: str = "auto"
     roi_margin_px: int = 30
+    contrast_mode: str = "none"
+    clahe_clip_limit: float = 2.0
+    clahe_tile_size: int = 8
+    threshold_scale: float = 1.0
+    motion_mode: str = "off"
+    motion_threshold_scale: float = 1.0
+    motion_min_intensity: float = 8.0
+    motion_dilate_kernel: int = 5
+    motion_min_area_px: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,7 @@ class VideoFrameResult:
     field_area_mm2: float
     density_per_mm2: float
     mask_area_px: int
+    motion_area_px: int
     polarity: str
     processing_ms: float
     detections: tuple[Detection, ...]
@@ -238,6 +248,7 @@ def analyze_video(
     results: list[VideoFrameResult] = []
     frame_index = 0
     sampled_frame_index = 0
+    previous_motion_gray: np.ndarray | None = None
 
     try:
         while True:
@@ -253,10 +264,27 @@ def analyze_video(
                 break
 
             start = perf_counter()
+            roi_mask = _build_roi_mask(frame, config)
+            motion_mask = None
+            if config.motion_mode != "off":
+                motion_gray = _prepare_motion_gray(frame, config)
+                if previous_motion_gray is not None:
+                    motion_mask = _build_motion_mask(
+                        previous_motion_gray,
+                        motion_gray,
+                        roi_mask,
+                        config,
+                    )
+                elif config.motion_mode == "filter":
+                    motion_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+                previous_motion_gray = motion_gray
+
             frame_result = analyze_frame_array(
                 image=frame,
                 calibration_um_per_pixel=calibration_um_per_pixel,
                 config=config,
+                roi_mask=roi_mask,
+                motion_mask=motion_mask,
             )
             processing_ms = (perf_counter() - start) * 1000.0
             timestamp_s = frame_index / source_fps
@@ -274,6 +302,7 @@ def analyze_video(
                 field_area_mm2=frame_result["field_area_mm2"],
                 density_per_mm2=frame_result["density_per_mm2"],
                 mask_area_px=frame_result["mask_area_px"],
+                motion_area_px=frame_result["motion_area_px"],
                 polarity=frame_result["polarity"],
                 processing_ms=processing_ms,
                 detections=frame_result["detections"],
@@ -286,6 +315,7 @@ def analyze_video(
                         frame,
                         result.detections,
                         roi_mask=frame_result["roi_mask"],
+                        motion_mask=frame_result["motion_mask"],
                     )
                 )
 
@@ -303,10 +333,20 @@ def analyze_frame_array(
     image: np.ndarray,
     calibration_um_per_pixel: float,
     config: DetectorConfig,
+    roi_mask: np.ndarray | None = None,
+    motion_mask: np.ndarray | None = None,
 ) -> dict[str, object]:
     height_px, width_px = image.shape[:2]
-    roi_mask = _build_roi_mask(image, config)
-    mask, detections, selected_polarity = _detect_worms(image, config, roi_mask)
+    if roi_mask is None:
+        roi_mask = _build_roi_mask(image, config)
+    if motion_mask is not None and roi_mask is not None:
+        motion_mask = cv2.bitwise_and(motion_mask, roi_mask)
+    mask, detections, selected_polarity = _detect_worms(
+        image,
+        config,
+        roi_mask,
+        motion_mask,
+    )
     if roi_mask is None:
         roi_area_px = width_px * height_px
     else:
@@ -324,8 +364,10 @@ def analyze_frame_array(
         "field_area_mm2": field_area_mm2,
         "density_per_mm2": density_per_mm2,
         "mask_area_px": int(np.count_nonzero(mask)),
+        "motion_area_px": 0 if motion_mask is None else int(np.count_nonzero(motion_mask)),
         "polarity": selected_polarity,
         "roi_mask": roi_mask,
+        "motion_mask": motion_mask,
         "detections": tuple(detections),
     }
 
@@ -334,11 +376,15 @@ def draw_annotations(
     image: np.ndarray,
     detections: Iterable[Detection],
     roi_mask: np.ndarray | None = None,
+    motion_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     annotated = image.copy()
     if roi_mask is not None:
         contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(annotated, contours, -1, (80, 220, 80), 2)
+    if motion_mask is not None:
+        contours, _ = cv2.findContours(motion_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(annotated, contours, -1, (255, 140, 0), 1)
     for detection in detections:
         top_left = (detection.x, detection.y)
         bottom_right = (
@@ -370,15 +416,34 @@ def _detect_worms(
     image: np.ndarray,
     config: DetectorConfig,
     roi_mask: np.ndarray | None,
+    motion_mask: np.ndarray | None,
 ) -> tuple[np.ndarray, list[Detection], str]:
     if config.polarity == "auto":
-        dark_mask, dark_detections = _detect_for_polarity(image, config, "dark", roi_mask)
-        bright_mask, bright_detections = _detect_for_polarity(image, config, "bright", roi_mask)
+        dark_mask, dark_detections = _detect_for_polarity(
+            image,
+            config,
+            "dark",
+            roi_mask,
+            motion_mask,
+        )
+        bright_mask, bright_detections = _detect_for_polarity(
+            image,
+            config,
+            "bright",
+            roi_mask,
+            motion_mask,
+        )
         if len(bright_detections) > len(dark_detections):
             return bright_mask, bright_detections, "bright"
         return dark_mask, dark_detections, "dark"
 
-    mask, detections = _detect_for_polarity(image, config, config.polarity, roi_mask)
+    mask, detections = _detect_for_polarity(
+        image,
+        config,
+        config.polarity,
+        roi_mask,
+        motion_mask,
+    )
     return mask, detections, config.polarity
 
 
@@ -387,8 +452,10 @@ def _detect_for_polarity(
     config: DetectorConfig,
     polarity: str,
     roi_mask: np.ndarray | None,
+    motion_mask: np.ndarray | None,
 ) -> tuple[np.ndarray, list[Detection]]:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = _enhance_gray(gray, config)
     gray = cv2.GaussianBlur(gray, _odd_kernel(config.blur_kernel), 0)
     background = cv2.GaussianBlur(gray, _odd_kernel(config.background_kernel), 0)
 
@@ -402,12 +469,14 @@ def _detect_for_polarity(
     corrected = cv2.normalize(corrected, None, 0, 255, cv2.NORM_MINMAX)
     corrected = corrected.astype(np.uint8)
 
-    _, mask = cv2.threshold(
+    otsu_threshold, _ = cv2.threshold(
         corrected,
         0,
         255,
         cv2.THRESH_BINARY + cv2.THRESH_OTSU,
     )
+    threshold_value = _scaled_threshold(otsu_threshold, config.threshold_scale)
+    _, mask = cv2.threshold(corrected, threshold_value, 255, cv2.THRESH_BINARY)
 
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE,
@@ -417,10 +486,104 @@ def _detect_for_polarity(
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     if roi_mask is not None:
         mask = cv2.bitwise_and(mask, roi_mask)
+    if motion_mask is not None:
+        mask = _apply_motion_constraint(mask, motion_mask, config)
+        if roi_mask is not None:
+            mask = cv2.bitwise_and(mask, roi_mask)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     detections = _filter_contours(contours, config)
     return mask, detections
+
+
+def _prepare_motion_gray(image: np.ndarray, config: DetectorConfig) -> np.ndarray:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = _enhance_gray(gray, config)
+    return cv2.GaussianBlur(gray, _odd_kernel(config.blur_kernel), 0)
+
+
+def _build_motion_mask(
+    previous_gray: np.ndarray,
+    current_gray: np.ndarray,
+    roi_mask: np.ndarray | None,
+    config: DetectorConfig,
+) -> np.ndarray:
+    diff = cv2.absdiff(current_gray, previous_gray)
+    diff = diff.astype(np.uint8)
+    if roi_mask is not None:
+        diff = cv2.bitwise_and(diff, roi_mask)
+
+    otsu_threshold, _ = cv2.threshold(
+        diff,
+        0,
+        255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+    )
+    threshold_value = max(
+        float(config.motion_min_intensity),
+        _scaled_threshold(otsu_threshold, config.motion_threshold_scale),
+    )
+    _, motion_mask = cv2.threshold(diff, threshold_value, 255, cv2.THRESH_BINARY)
+
+    cleanup_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        _odd_kernel(max(1, config.morph_kernel)),
+    )
+    motion_mask = cv2.morphologyEx(motion_mask, cv2.MORPH_OPEN, cleanup_kernel)
+    motion_mask = _remove_small_regions(motion_mask, config.motion_min_area_px)
+
+    dilate_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        _odd_kernel(config.motion_dilate_kernel),
+    )
+    motion_mask = cv2.dilate(motion_mask, dilate_kernel)
+    if roi_mask is not None:
+        motion_mask = cv2.bitwise_and(motion_mask, roi_mask)
+    return motion_mask
+
+
+def _apply_motion_constraint(
+    mask: np.ndarray,
+    motion_mask: np.ndarray,
+    config: DetectorConfig,
+) -> np.ndarray:
+    if config.motion_mode == "off":
+        return mask
+    if config.motion_mode == "filter":
+        return cv2.bitwise_and(mask, motion_mask)
+    if config.motion_mode == "augment":
+        return cv2.bitwise_or(mask, motion_mask)
+    raise ValueError(f"Unsupported motion mode: {config.motion_mode}")
+
+
+def _remove_small_regions(mask: np.ndarray, min_area_px: float) -> np.ndarray:
+    if min_area_px <= 0:
+        return mask
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cleaned = np.zeros_like(mask)
+    for contour in contours:
+        if cv2.contourArea(contour) >= min_area_px:
+            cv2.drawContours(cleaned, [contour], -1, 255, thickness=cv2.FILLED)
+    return cleaned
+
+
+def _enhance_gray(gray: np.ndarray, config: DetectorConfig) -> np.ndarray:
+    if config.contrast_mode == "none":
+        return gray
+    if config.contrast_mode == "clahe":
+        tile_size = max(2, int(config.clahe_tile_size))
+        clahe = cv2.createCLAHE(
+            clipLimit=max(0.1, float(config.clahe_clip_limit)),
+            tileGridSize=(tile_size, tile_size),
+        )
+        return clahe.apply(gray)
+    raise ValueError(f"Unsupported contrast mode: {config.contrast_mode}")
+
+
+def _scaled_threshold(otsu_threshold: float, threshold_scale: float) -> float:
+    scale = max(0.05, float(threshold_scale))
+    return max(1.0, min(255.0, otsu_threshold * scale))
 
 
 def _build_roi_mask(image: np.ndarray, config: DetectorConfig) -> np.ndarray | None:

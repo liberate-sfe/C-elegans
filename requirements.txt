@@ -4,3 +4,7 @@ pandas
 matplotlib
 scipy
 tqdm
+
+# Optional training stack for WormSwin-derived segmentation experiments.
+# Install these only when training or running YOLO segmentation.
+ultralytics

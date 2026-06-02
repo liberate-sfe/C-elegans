@@ -13,6 +13,11 @@ venv/
 # Local data and generated outputs
 data/raw/
 data/full_dataset/
+data/validation_frames/
+data/wormswin_yolo/
+models/
+runs/
+*.pt
 results/annotated_images/*
 results/annotated_videos/*
 results/annotated_videos_*/
