@@ -1,0 +1,2 @@
+image_id,manual_worm_count,manual_egg_count,annotator,date,notes
+synthetic_worms,3,0,user01,2026-06-01,Synthetic smoke-test image only; replace with real manual counts.

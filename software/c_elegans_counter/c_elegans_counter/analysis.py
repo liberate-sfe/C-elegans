@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from time import perf_counter
+from typing import Iterable
+
+import cv2
+import numpy as np
+
+
+IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+
+@dataclass(frozen=True)
+class DetectorConfig:
+    polarity: str = "dark"
+    min_area_px: float = 80.0
+    max_area_px: float = 50000.0
+    min_aspect_ratio: float = 1.2
+    min_length_px: float = 12.0
+    blur_kernel: int = 5
+    background_kernel: int = 51
+    morph_kernel: int = 3
+
+
+@dataclass(frozen=True)
+class Detection:
+    detection_id: int
+    x: int
+    y: int
+    width: int
+    height: int
+    centroid_x: float
+    centroid_y: float
+    area_px: float
+    length_px: float
+    aspect_ratio: float
+    solidity: float
+
+
+@dataclass(frozen=True)
+class ImageResult:
+    image_id: str
+    image_path: Path
+    width_px: int
+    height_px: int
+    worm_count: int
+    field_area_mm2: float
+    density_per_mm2: float
+    mask_area_px: int
+    polarity: str
+    annotated_image: Path | None
+    processing_ms: float
+    detections: tuple[Detection, ...]
+
+
+def iter_image_paths(input_path: Path) -> list[Path]:
+    if input_path.is_file():
+        if input_path.suffix.lower() not in IMAGE_SUFFIXES:
+            raise ValueError(f"Unsupported image suffix: {input_path.suffix}")
+        return [input_path]
+
+    if not input_path.is_dir():
+        raise FileNotFoundError(f"Input path does not exist: {input_path}")
+
+    return sorted(
+        path
+        for path in input_path.rglob("*")
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+    )
+
+
+def analyze_image(
+    image_path: Path,
+    calibration_um_per_pixel: float,
+    annotated_dir: Path | None,
+    config: DetectorConfig,
+) -> ImageResult:
+    start = perf_counter()
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"OpenCV could not read image: {image_path}")
+
+    height_px, width_px = image.shape[:2]
+    mask, detections, selected_polarity = _detect_worms(image, config)
+
+    annotated_image = None
+    if annotated_dir is not None:
+        annotated_dir.mkdir(parents=True, exist_ok=True)
+        annotated = draw_annotations(image, detections)
+        annotated_image = annotated_dir / f"{image_path.stem}_annotated.png"
+        if not cv2.imwrite(str(annotated_image), annotated):
+            raise OSError(f"Could not write annotated image: {annotated_image}")
+
+    width_mm = width_px * calibration_um_per_pixel / 1000.0
+    height_mm = height_px * calibration_um_per_pixel / 1000.0
+    field_area_mm2 = width_mm * height_mm
+    worm_count = len(detections)
+    density_per_mm2 = worm_count / field_area_mm2 if field_area_mm2 > 0 else 0.0
+    processing_ms = (perf_counter() - start) * 1000.0
+
+    return ImageResult(
+        image_id=image_path.stem,
+        image_path=image_path,
+        width_px=width_px,
+        height_px=height_px,
+        worm_count=worm_count,
+        field_area_mm2=field_area_mm2,
+        density_per_mm2=density_per_mm2,
+        mask_area_px=int(np.count_nonzero(mask)),
+        polarity=selected_polarity,
+        annotated_image=annotated_image,
+        processing_ms=processing_ms,
+        detections=tuple(detections),
+    )
+
+
+def draw_annotations(image: np.ndarray, detections: Iterable[Detection]) -> np.ndarray:
+    annotated = image.copy()
+    for detection in detections:
+        top_left = (detection.x, detection.y)
+        bottom_right = (
+            detection.x + detection.width,
+            detection.y + detection.height,
+        )
+        cv2.rectangle(annotated, top_left, bottom_right, (0, 180, 255), 2)
+        cv2.circle(
+            annotated,
+            (int(round(detection.centroid_x)), int(round(detection.centroid_y))),
+            3,
+            (0, 80, 255),
+            -1,
+        )
+        cv2.putText(
+            annotated,
+            str(detection.detection_id),
+            (detection.x, max(12, detection.y - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (0, 80, 255),
+            1,
+            cv2.LINE_AA,
+        )
+    return annotated
+
+
+def _detect_worms(
+    image: np.ndarray,
+    config: DetectorConfig,
+) -> tuple[np.ndarray, list[Detection], str]:
+    if config.polarity == "auto":
+        dark_mask, dark_detections = _detect_for_polarity(image, config, "dark")
+        bright_mask, bright_detections = _detect_for_polarity(image, config, "bright")
+        if len(bright_detections) > len(dark_detections):
+            return bright_mask, bright_detections, "bright"
+        return dark_mask, dark_detections, "dark"
+
+    mask, detections = _detect_for_polarity(image, config, config.polarity)
+    return mask, detections, config.polarity
+
+
+def _detect_for_polarity(
+    image: np.ndarray,
+    config: DetectorConfig,
+    polarity: str,
+) -> tuple[np.ndarray, list[Detection]]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, _odd_kernel(config.blur_kernel), 0)
+    background = cv2.GaussianBlur(gray, _odd_kernel(config.background_kernel), 0)
+
+    if polarity == "dark":
+        corrected = cv2.subtract(background, gray)
+    elif polarity == "bright":
+        corrected = cv2.subtract(gray, background)
+    else:
+        raise ValueError(f"Unsupported polarity: {polarity}")
+
+    corrected = cv2.normalize(corrected, None, 0, 255, cv2.NORM_MINMAX)
+    corrected = corrected.astype(np.uint8)
+
+    _, mask = cv2.threshold(
+        corrected,
+        0,
+        255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+    )
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        _odd_kernel(config.morph_kernel),
+    )
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    detections = _filter_contours(contours, config)
+    return mask, detections
+
+
+def _filter_contours(
+    contours: Iterable[np.ndarray],
+    config: DetectorConfig,
+) -> list[Detection]:
+    detections: list[Detection] = []
+    for contour in contours:
+        area_px = float(cv2.contourArea(contour))
+        if area_px < config.min_area_px or area_px > config.max_area_px:
+            continue
+
+        x, y, width, height = cv2.boundingRect(contour)
+        length_px = float(max(width, height))
+        if length_px < config.min_length_px:
+            continue
+
+        short_side = max(1, min(width, height))
+        aspect_ratio = float(max(width, height) / short_side)
+        if aspect_ratio < config.min_aspect_ratio:
+            continue
+
+        hull = cv2.convexHull(contour)
+        hull_area = float(cv2.contourArea(hull))
+        solidity = area_px / hull_area if hull_area > 0 else 0.0
+        moments = cv2.moments(contour)
+        if moments["m00"] != 0:
+            centroid_x = float(moments["m10"] / moments["m00"])
+            centroid_y = float(moments["m01"] / moments["m00"])
+        else:
+            centroid_x = float(x + width / 2)
+            centroid_y = float(y + height / 2)
+
+        detections.append(
+            Detection(
+                detection_id=0,
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                centroid_x=centroid_x,
+                centroid_y=centroid_y,
+                area_px=area_px,
+                length_px=length_px,
+                aspect_ratio=aspect_ratio,
+                solidity=solidity,
+            )
+        )
+
+    detections.sort(key=lambda detection: (detection.y, detection.x))
+    return [
+        Detection(
+            detection_id=index,
+            x=detection.x,
+            y=detection.y,
+            width=detection.width,
+            height=detection.height,
+            centroid_x=detection.centroid_x,
+            centroid_y=detection.centroid_y,
+            area_px=detection.area_px,
+            length_px=detection.length_px,
+            aspect_ratio=detection.aspect_ratio,
+            solidity=detection.solidity,
+        )
+        for index, detection in enumerate(detections, start=1)
+    ]
+
+
+def _odd_kernel(value: int) -> tuple[int, int]:
+    value = max(1, int(value))
+    if value % 2 == 0:
+        value += 1
+    return value, value

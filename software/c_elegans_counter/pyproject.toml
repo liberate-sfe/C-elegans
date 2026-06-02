@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "c-elegans-counter"
+version = "0.1.0"
+description = "OpenCV baseline for C. elegans counting and density estimation."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "opencv-python",
+  "numpy",
+]
+
+[project.scripts]
+c-elegans-counter = "c_elegans_counter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
