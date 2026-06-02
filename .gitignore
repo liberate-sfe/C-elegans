@@ -15,6 +15,7 @@ data/raw/
 data/full_dataset/
 results/annotated_images/*
 results/annotated_videos/*
+results/annotated_videos_*/
 results/csv/*
 
 # Keep directory docs
