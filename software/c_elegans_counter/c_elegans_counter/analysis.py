@@ -26,6 +26,8 @@ class DetectorConfig:
     blur_kernel: int = 5
     background_kernel: int = 51
     morph_kernel: int = 3
+    roi_mode: str = "auto"
+    roi_margin_px: int = 30
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,7 @@ class ImageResult:
     width_px: int
     height_px: int
     worm_count: int
+    roi_area_px: int
     field_area_mm2: float
     density_per_mm2: float
     mask_area_px: int
@@ -69,6 +72,7 @@ class VideoFrameResult:
     width_px: int
     height_px: int
     worm_count: int
+    roi_area_px: int
     field_area_mm2: float
     density_per_mm2: float
     mask_area_px: int
@@ -168,7 +172,11 @@ def analyze_image(
     annotated_image = None
     if annotated_dir is not None:
         annotated_dir.mkdir(parents=True, exist_ok=True)
-        annotated = draw_annotations(image, frame_result["detections"])
+        annotated = draw_annotations(
+            image,
+            frame_result["detections"],
+            roi_mask=frame_result["roi_mask"],
+        )
         annotated_image = annotated_dir / f"{image_path.stem}_annotated.png"
         if not cv2.imwrite(str(annotated_image), annotated):
             raise OSError(f"Could not write annotated image: {annotated_image}")
@@ -181,6 +189,7 @@ def analyze_image(
         width_px=frame_result["width_px"],
         height_px=frame_result["height_px"],
         worm_count=frame_result["worm_count"],
+        roi_area_px=frame_result["roi_area_px"],
         field_area_mm2=frame_result["field_area_mm2"],
         density_per_mm2=frame_result["density_per_mm2"],
         mask_area_px=frame_result["mask_area_px"],
@@ -261,6 +270,7 @@ def analyze_video(
                 width_px=frame_result["width_px"],
                 height_px=frame_result["height_px"],
                 worm_count=frame_result["worm_count"],
+                roi_area_px=frame_result["roi_area_px"],
                 field_area_mm2=frame_result["field_area_mm2"],
                 density_per_mm2=frame_result["density_per_mm2"],
                 mask_area_px=frame_result["mask_area_px"],
@@ -271,7 +281,13 @@ def analyze_video(
             results.append(result)
 
             if writer is not None:
-                writer.write(draw_annotations(frame, result.detections))
+                writer.write(
+                    draw_annotations(
+                        frame,
+                        result.detections,
+                        roi_mask=frame_result["roi_mask"],
+                    )
+                )
 
             sampled_frame_index += 1
             frame_index += 1
@@ -289,10 +305,14 @@ def analyze_frame_array(
     config: DetectorConfig,
 ) -> dict[str, object]:
     height_px, width_px = image.shape[:2]
-    mask, detections, selected_polarity = _detect_worms(image, config)
-    width_mm = width_px * calibration_um_per_pixel / 1000.0
-    height_mm = height_px * calibration_um_per_pixel / 1000.0
-    field_area_mm2 = width_mm * height_mm
+    roi_mask = _build_roi_mask(image, config)
+    mask, detections, selected_polarity = _detect_worms(image, config, roi_mask)
+    if roi_mask is None:
+        roi_area_px = width_px * height_px
+    else:
+        roi_area_px = int(np.count_nonzero(roi_mask))
+    pixel_area_mm2 = (calibration_um_per_pixel / 1000.0) ** 2
+    field_area_mm2 = roi_area_px * pixel_area_mm2
     worm_count = len(detections)
     density_per_mm2 = worm_count / field_area_mm2 if field_area_mm2 > 0 else 0.0
 
@@ -300,16 +320,25 @@ def analyze_frame_array(
         "width_px": width_px,
         "height_px": height_px,
         "worm_count": worm_count,
+        "roi_area_px": roi_area_px,
         "field_area_mm2": field_area_mm2,
         "density_per_mm2": density_per_mm2,
         "mask_area_px": int(np.count_nonzero(mask)),
         "polarity": selected_polarity,
+        "roi_mask": roi_mask,
         "detections": tuple(detections),
     }
 
 
-def draw_annotations(image: np.ndarray, detections: Iterable[Detection]) -> np.ndarray:
+def draw_annotations(
+    image: np.ndarray,
+    detections: Iterable[Detection],
+    roi_mask: np.ndarray | None = None,
+) -> np.ndarray:
     annotated = image.copy()
+    if roi_mask is not None:
+        contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(annotated, contours, -1, (80, 220, 80), 2)
     for detection in detections:
         top_left = (detection.x, detection.y)
         bottom_right = (
@@ -340,15 +369,16 @@ def draw_annotations(image: np.ndarray, detections: Iterable[Detection]) -> np.n
 def _detect_worms(
     image: np.ndarray,
     config: DetectorConfig,
+    roi_mask: np.ndarray | None,
 ) -> tuple[np.ndarray, list[Detection], str]:
     if config.polarity == "auto":
-        dark_mask, dark_detections = _detect_for_polarity(image, config, "dark")
-        bright_mask, bright_detections = _detect_for_polarity(image, config, "bright")
+        dark_mask, dark_detections = _detect_for_polarity(image, config, "dark", roi_mask)
+        bright_mask, bright_detections = _detect_for_polarity(image, config, "bright", roi_mask)
         if len(bright_detections) > len(dark_detections):
             return bright_mask, bright_detections, "bright"
         return dark_mask, dark_detections, "dark"
 
-    mask, detections = _detect_for_polarity(image, config, config.polarity)
+    mask, detections = _detect_for_polarity(image, config, config.polarity, roi_mask)
     return mask, detections, config.polarity
 
 
@@ -356,6 +386,7 @@ def _detect_for_polarity(
     image: np.ndarray,
     config: DetectorConfig,
     polarity: str,
+    roi_mask: np.ndarray | None,
 ) -> tuple[np.ndarray, list[Detection]]:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, _odd_kernel(config.blur_kernel), 0)
@@ -384,10 +415,57 @@ def _detect_for_polarity(
     )
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    if roi_mask is not None:
+        mask = cv2.bitwise_and(mask, roi_mask)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     detections = _filter_contours(contours, config)
     return mask, detections
+
+
+def _build_roi_mask(image: np.ndarray, config: DetectorConfig) -> np.ndarray | None:
+    if config.roi_mode == "none":
+        return None
+    if config.roi_mode != "auto":
+        raise ValueError(f"Unsupported ROI mode: {config.roi_mode}")
+
+    height_px, width_px = image.shape[:2]
+    frame_area_px = width_px * height_px
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, _odd_kernel(config.background_kernel), 0)
+    _, light_mask = cv2.threshold(
+        blurred,
+        0,
+        255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+    )
+
+    cleanup_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, _odd_kernel(31))
+    light_mask = cv2.morphologyEx(light_mask, cv2.MORPH_CLOSE, cleanup_kernel)
+    light_mask = cv2.morphologyEx(light_mask, cv2.MORPH_OPEN, cleanup_kernel)
+
+    contours, _ = cv2.findContours(light_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    field_contour = max(contours, key=cv2.contourArea)
+    field_area_px = float(cv2.contourArea(field_contour))
+    area_ratio = field_area_px / frame_area_px if frame_area_px > 0 else 0.0
+    if area_ratio < 0.15 or area_ratio > 0.98:
+        return None
+
+    roi_mask = np.zeros((height_px, width_px), dtype=np.uint8)
+    hull = cv2.convexHull(field_contour)
+    cv2.drawContours(roi_mask, [hull], -1, 255, thickness=cv2.FILLED)
+
+    margin_px = max(0, int(config.roi_margin_px))
+    if margin_px > 0:
+        distance = cv2.distanceTransform(roi_mask, cv2.DIST_L2, 5)
+        roi_mask = np.where(distance > margin_px, 255, 0).astype(np.uint8)
+        if np.count_nonzero(roi_mask) < frame_area_px * 0.05:
+            return None
+
+    return roi_mask
 
 
 def _filter_contours(

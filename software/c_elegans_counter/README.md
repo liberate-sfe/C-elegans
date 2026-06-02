@@ -60,6 +60,26 @@ c-elegans-counter analyze-video `
   --detections-output results/csv/video_detections.csv
 ```
 
+The default settings automatically detect the circular/elliptical microscope
+field of view and ignore the black border around it. This reduces false
+positives from the microscope edge:
+
+```powershell
+c-elegans-counter analyze-video `
+  --input "C:\path\to\example C elegans" `
+  --calibration-um-per-pixel 2.5 `
+  --frame-step 30 `
+  --polarity auto `
+  --roi-mode auto `
+  --roi-margin-px 30 `
+  --output results/csv/video_frames_roi.csv `
+  --detections-output results/csv/video_detections_roi.csv `
+  --annotated-video results/annotated_videos_roi
+```
+
+When ROI mode is enabled, `field_area_mm2` is calculated from the detected
+field of view area. The CSV also reports `roi_area_px` for transparency.
+
 ## Image Calibration Helper
 
 Still-image analysis remains available for calibration frames and quick tuning:
@@ -92,6 +112,8 @@ video_id,frame_index,manual_worm_count
 | `--min-length-px` | Remove tiny objects |
 | `--background-kernel` | Controls broad illumination correction |
 | `--frame-step` | Analyze every Nth frame for long videos |
+| `--roi-mode` | `auto` detects the microscope field of view; `none` analyzes the full frame |
+| `--roi-margin-px` | Shrinks the detected field inward to avoid edge artifacts |
 
 This baseline is intentionally simple. It should be tuned against real videos
 before being treated as a scientific counting method.

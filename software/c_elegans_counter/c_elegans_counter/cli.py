@@ -15,6 +15,7 @@ SUMMARY_FIELDS = [
     "manual_worm_count",
     "absolute_error",
     "percentage_error",
+    "roi_area_px",
     "field_area_mm2",
     "worm_density_per_mm2",
     "calibration_um_per_pixel",
@@ -50,6 +51,7 @@ VIDEO_FRAME_FIELDS = [
     "sampled_frame_index",
     "timestamp_s",
     "worm_count",
+    "roi_area_px",
     "field_area_mm2",
     "worm_density_per_mm2",
     "calibration_um_per_pixel",
@@ -129,6 +131,18 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--blur-kernel", type=int, default=5)
     analyze.add_argument("--background-kernel", type=int, default=51)
     analyze.add_argument("--morph-kernel", type=int, default=3)
+    analyze.add_argument(
+        "--roi-mode",
+        choices=["auto", "none"],
+        default="auto",
+        help="Use auto to detect and crop the circular microscope field of view.",
+    )
+    analyze.add_argument(
+        "--roi-margin-px",
+        type=int,
+        default=30,
+        help="Pixels to shrink inward from the detected microscope-field edge.",
+    )
     analyze.set_defaults(command="analyze")
 
     analyze_video = subparsers.add_parser(
@@ -175,6 +189,18 @@ def add_detector_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--blur-kernel", type=int, default=5)
     parser.add_argument("--background-kernel", type=int, default=51)
     parser.add_argument("--morph-kernel", type=int, default=3)
+    parser.add_argument(
+        "--roi-mode",
+        choices=["auto", "none"],
+        default="auto",
+        help="Use auto to detect and crop the circular microscope field of view.",
+    )
+    parser.add_argument(
+        "--roi-margin-px",
+        type=int,
+        default=30,
+        help="Pixels to shrink inward from the detected microscope-field edge.",
+    )
 
 
 def analyze_command(args: argparse.Namespace) -> int:
@@ -182,6 +208,8 @@ def analyze_command(args: argparse.Namespace) -> int:
 
     if args.calibration_um_per_pixel <= 0:
         raise SystemExit("--calibration-um-per-pixel must be greater than zero.")
+    if args.roi_margin_px < 0:
+        raise SystemExit("--roi-margin-px must be zero or greater.")
 
     config = DetectorConfig(
         polarity=args.polarity,
@@ -192,6 +220,8 @@ def analyze_command(args: argparse.Namespace) -> int:
         blur_kernel=args.blur_kernel,
         background_kernel=args.background_kernel,
         morph_kernel=args.morph_kernel,
+        roi_mode=args.roi_mode,
+        roi_margin_px=args.roi_margin_px,
     )
 
     manual_counts = load_manual_counts(
@@ -258,6 +288,8 @@ def analyze_video_command(args: argparse.Namespace) -> int:
         raise SystemExit("--frame-step must be greater than zero.")
     if args.max_frames is not None and args.max_frames <= 0:
         raise SystemExit("--max-frames must be greater than zero.")
+    if args.roi_margin_px < 0:
+        raise SystemExit("--roi-margin-px must be zero or greater.")
 
     config = DetectorConfig(
         polarity=args.polarity,
@@ -268,6 +300,8 @@ def analyze_video_command(args: argparse.Namespace) -> int:
         blur_kernel=args.blur_kernel,
         background_kernel=args.background_kernel,
         morph_kernel=args.morph_kernel,
+        roi_mode=args.roi_mode,
+        roi_margin_px=args.roi_margin_px,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -373,6 +407,7 @@ def build_summary_row(
         "manual_worm_count": "" if manual_count is None else manual_count,
         "absolute_error": absolute_error,
         "percentage_error": percentage_error,
+        "roi_area_px": result.roi_area_px,
         "field_area_mm2": result.field_area_mm2,
         "worm_density_per_mm2": result.density_per_mm2,
         "calibration_um_per_pixel": calibration_um_per_pixel,
@@ -399,6 +434,7 @@ def build_error_row(
         "manual_worm_count": "",
         "absolute_error": "",
         "percentage_error": "",
+        "roi_area_px": "",
         "field_area_mm2": "",
         "worm_density_per_mm2": "",
         "calibration_um_per_pixel": calibration_um_per_pixel,
@@ -460,6 +496,7 @@ def build_video_frame_row(
         "sampled_frame_index": result.sampled_frame_index,
         "timestamp_s": result.timestamp_s,
         "worm_count": result.worm_count,
+        "roi_area_px": result.roi_area_px,
         "field_area_mm2": result.field_area_mm2,
         "worm_density_per_mm2": result.density_per_mm2,
         "calibration_um_per_pixel": calibration_um_per_pixel,
@@ -486,6 +523,7 @@ def build_video_error_row(
         "sampled_frame_index": "",
         "timestamp_s": "",
         "worm_count": "",
+        "roi_area_px": "",
         "field_area_mm2": "",
         "worm_density_per_mm2": "",
         "calibration_um_per_pixel": calibration_um_per_pixel,

@@ -1,0 +1,20 @@
+video_id,sampled_frames,mean_worm_count,min_worm_count,max_worm_count,mean_density_per_mm2,mean_roi_area_px,source_video_path
+AH5615_T1,10,0,0,0,0.0,254718.4,zip:Example video data for the C. elegans pilot idea_1/AH5615_T1.mp4
+AH5615_T2,10,0,0,0,0.0,248731.0,zip:Example video data for the C. elegans pilot idea_1/AH5615_T2.mp4
+AH5615_T3,10,0,0,0,0.0,256309.8,zip:Example video data for the C. elegans pilot idea_1/AH5615_T3.mp4
+JRG02_T1,10,0,0,0,0.0,257794.3,zip:Example video data for the C. elegans pilot idea_1/JRG02_T1.mp4
+JRG02_T2,10,0,0,0,0.0,253545.4,zip:Example video data for the C. elegans pilot idea_1/JRG02_T2.mp4
+JRG03_T3,10,0,0,0,0.0,245740.8,zip:Example video data for the C. elegans pilot idea_1/JRG03_T3.mp4
+MIX_T1,10,0,0,0,0.0,311020.8,zip:Example video data for the C. elegans pilot idea_1/MIX_T1.mp4
+MIX_T2,10,0.6,0,2,0.3693,257815.2,zip:Example video data for the C. elegans pilot idea_1/MIX_T2.mp4
+MIX_T3,10,1.8,1,4,0.9316,309144.0,zip:Example video data for the C. elegans pilot idea_1/MIX_T3.mp4
+One weak ago_T1,10,0,0,0,0.0,256236.4,zip:Re_ Example video data for the C. elegans pilot idea_1/One weak ago_T1.mp4
+One weak ago_T2,10,0.1,0,1,0.0627,254143.3,zip:Re_ Example video data for the C. elegans pilot idea_1/One weak ago_T2.mp4
+One weak ago_T3,10,0,0,0,0.0,256926.4,zip:Re_ Example video data for the C. elegans pilot idea_1/One weak ago_T3.mp4
+Pass_LT_T1,10,6.1,5,7,2.2105,441456.2,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_LT_T1.mp4
+Pass_LT_T2,10,5.2,3,7,1.7965,463107.6,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_LT_T2.mp4
+Pass_Less_T1,10,45.1,42,50,13.6242,529643.2,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_Less_T1.mp4
+Pass_Less_T2,10,25.2,21,31,7.686,524727.5,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_Less_T2.mp4
+Pass_T1,10,16.4,13,20,5.4244,483750.9,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_T1.mp4
+Pass_T2,10,58.3,49,66,16.17,577101.2,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_T2.mp4
+Pass_T3,10,44.1,39,52,12.91,546545.8,zip:Re_ Example video data for the C. elegans pilot idea_1/Pass_T3.mp4
