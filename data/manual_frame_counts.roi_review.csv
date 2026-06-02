@@ -1,0 +1,12 @@
+video_id,frame_index,timestamp_s,manual_worm_count,auto_roi_count,count_type,confidence,notes
+AH5615_T1,0,0.0,35,0,visual_estimate,low,"Very low contrast; counted from enhanced frame; many faint worm-like bodies."
+AH5615_T2,0,0.0,45,0,visual_estimate,low,"Very low contrast; counted from enhanced frame; faint small worms likely missed by current threshold."
+JRG02_T2,0,0.0,95,0,visual_estimate,low,"Many small low-contrast larvae-like objects; needs human confirmation under microscope."
+One weak ago_T1,0,0.0,15,0,visual_estimate,low,"One clear long worm plus multiple faint short worm-like bodies in enhanced frame."
+MIX_T2,0,0.0,30,2,visual_count,medium,"Moderate count from enhanced frame; several short/curled worms."
+MIX_T3,0,0.0,25,1,visual_count,medium,"Moderate count from enhanced frame; some objects may be partial or out of focus."
+Pass_LT_T1,0,0.0,120,6,visual_estimate,low,"Dense small worms and debris-like structures; approximate count only."
+Pass_LT_T2,0,0.0,350,6,rough_lower_bound,low,"Extremely dense small worms or larvae-like structures; not reliably countable from one frame."
+Pass_T1,0,0.0,85,16,visual_estimate,medium,"Visible adult/large worms; moderate overlap."
+Pass_T2,0,0.0,160,49,visual_estimate,low,"Dense overlapping worms; approximate count only."
+Pass_Less_T1,0,0.0,230,50,visual_estimate,low,"Very dense overlapping worms; approximate count only."
