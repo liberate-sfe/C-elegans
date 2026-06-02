@@ -80,6 +80,32 @@ c-elegans-counter analyze-video `
 When ROI mode is enabled, `field_area_mm2` is calculated from the detected
 field of view area. The CSV also reports `roi_area_px` for transparency.
 
+## Live Camera Interface
+
+For microscope-camera use, start the local live interface from the repository
+root:
+
+```powershell
+c-elegans-live-camera --host 127.0.0.1 --port 7860 --camera-index 0
+```
+
+Then open:
+
+```text
+http://127.0.0.1:7860
+```
+
+The interface supports project presets, camera selection, live annotated camera
+feed, current worm count, FPS, and inference time. The default C. elegans YOLO
+preset uses the local fine-tuned model when present:
+
+```text
+runs/segment/runs/wormswin/yolo_seg_md_to_csb1_gpu_5e_frac025/weights/best.pt
+```
+
+If the model file is missing, keep the interface in preview mode or select the
+OpenCV baseline until a model has been trained locally.
+
 ## Image Calibration Helper
 
 Still-image analysis remains available for calibration frames and quick tuning:

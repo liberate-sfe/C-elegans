@@ -11,10 +11,12 @@ requires-python = ">=3.10"
 dependencies = [
   "opencv-python",
   "numpy",
+  "flask",
 ]
 
 [project.scripts]
 c-elegans-counter = "c_elegans_counter.cli:main"
+c-elegans-live-camera = "c_elegans_counter.live_camera_app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
